@@ -1,0 +1,11 @@
+{{- if .Values.initSql }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "simple-quack-server.fullname" . }}-init
+  labels:
+    {{- include "simple-quack-server.labels" . | nindent 4 }}
+data:
+  init.sql: |
+    {{- .Values.initSql | nindent 4 }}
+{{- end }}

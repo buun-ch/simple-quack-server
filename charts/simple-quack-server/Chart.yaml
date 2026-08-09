@@ -1,0 +1,11 @@
+apiVersion: v2
+name: simple-quack-server
+description: >-
+  A thin, long-lived runtime serving a DuckDB database (DuckLake first-class)
+  over the Quack protocol. Token authentication via an existing Secret.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/buun-ch/simple-quack-server
+sources:
+  - https://github.com/buun-ch/simple-quack-server

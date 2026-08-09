@@ -1,0 +1,19 @@
+simple-quack-server has been deployed.
+
+In-cluster clients (plain HTTP):
+
+  LOAD quack;
+  ATTACH 'quack:{{ include "simple-quack-server.fullname" . }}.{{ .Release.Namespace }}' AS remote
+      (TOKEN '<QUACK_TOKEN from secret {{ .Values.auth.existingSecret }}>', DISABLE_SSL true);
+  SELECT * FROM remote.<table>;                                 -- reads (mirror views)
+  SELECT * FROM remote.query('INSERT INTO lake.<table> ...');   -- writes / DDL
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+
+Remote clients (TLS terminated at the ingress; note the explicit :443 —
+the quack default port 9494 is usually not proxied):
+
+  ATTACH 'quack:{{ .host }}:443' AS remote (TOKEN '<token>');
+{{- end }}
+{{- end }}

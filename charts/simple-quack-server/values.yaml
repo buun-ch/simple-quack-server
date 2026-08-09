@@ -1,0 +1,99 @@
+# Default values for simple-quack-server.
+
+# The server is a single-writer DuckDB process; keep replicas at 1.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/buun-ch/simple-quack-server
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+auth:
+  # Name of an existing Secret whose keys are injected as environment
+  # variables (envFrom). Must contain QUACK_TOKEN, and typically the
+  # database coordinates (CATALOG_HOST, CATALOG_PORT, CATALOG_DB,
+  # CATALOG_USER, CATALOG_PASSWORD, S3_ENDPOINT, S3_ACCESS_KEY,
+  # S3_SECRET_KEY, DATA_PATH). REQUIRED.
+  existingSecret: ""
+
+# Additional plain (non-secret) environment variables.
+env: {}
+  # MIRROR_VIEWS: "true"
+  # VIEW_REFRESH_SECONDS: "60"
+  # ATTACH_ALIAS: lake
+
+# Optional SQL executed at startup instead of the CATALOG_*/S3_* attachment.
+# Rendered into a ConfigMap and passed to the server via INIT_SQL_FILE.
+initSql: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 9494
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: quack.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+livenessProbe:
+  tcpSocket:
+    port: quack
+  initialDelaySeconds: 20
+  periodSeconds: 30
+
+readinessProbe:
+  tcpSocket:
+    port: quack
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
