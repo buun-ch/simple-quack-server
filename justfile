@@ -20,6 +20,22 @@ image-build:
 image-push:
     docker push ${IMAGE}:${TAG}
 
+# Cut a release: GitHub release (tag vX.Y.Z) + image tags X.Y.Z and latest
+release version:
+    #!/bin/bash
+    set -euo pipefail
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Error: working tree is not clean. Commit and push first." >&2
+        exit 1
+    fi
+    git push
+    gh release create "v{{ version }}" --title "v{{ version }}" --generate-notes
+    TAG={{ version }} just image-build
+    TAG={{ version }} just image-push
+    docker tag ${IMAGE}:{{ version }} ${IMAGE}:latest
+    docker push ${IMAGE}:latest
+    echo "✅ Released v{{ version }} (image tags: {{ version }}, latest)"
+
 # Log in to ghcr.io using the gh CLI token (needs: gh auth refresh -s write:packages)
 registry-login:
     #!/bin/bash
