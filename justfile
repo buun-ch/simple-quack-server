@@ -20,20 +20,32 @@ image-build:
 image-push:
     docker push ${IMAGE}:${TAG}
 
+# Log in to ghcr.io using the gh CLI token (needs: gh auth refresh -s write:packages)
+registry-login:
+    #!/bin/bash
+    set -euo pipefail
+    gh auth token | docker login ghcr.io --username "$(gh api user --jq .login)" --password-stdin
+
 # Run the container locally (pass -e/--env-file via args)
 image-run *args='':
     docker run --rm -p 9494:9494 {{ args }} ${IMAGE}:${TAG}
 
-# List tags published on the registry (public images; anonymous pull token)
+# List tags published on the registry (anonymous for public images, gh credentials for private)
 image-tags:
     #!/bin/bash
     set -euo pipefail
     REPO=${IMAGE#*/}
-    TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:${REPO}:pull" \
-        | python3 -c "import json, sys; print(json.load(sys.stdin).get('token', ''))")
+    get_token() {
+        curl -s "$@" "https://ghcr.io/token?scope=repository:${REPO}:pull" \
+            | python3 -c "import json, sys; print(json.load(sys.stdin).get('token', ''))"
+    }
+    TOKEN=$(get_token)
+    if [ -z "${TOKEN}" ] && command -v gh &>/dev/null; then
+        TOKEN=$(get_token -u "$(gh api user --jq .login):$(gh auth token)")
+    fi
     if [ -z "${TOKEN}" ]; then
         echo "Error: could not get a pull token for ${REPO}." >&2
-        echo "The image may not be published yet, or is private (use 'gh api' with read:packages)." >&2
+        echo "The image may not be published yet, or your gh token lacks read:packages." >&2
         exit 1
     fi
     curl -s -H "Authorization: Bearer ${TOKEN}" "https://ghcr.io/v2/${REPO}/tags/list" \

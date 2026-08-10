@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.source="https://github.com/buun-ch/simple-quack-server" \
+      org.opencontainers.image.description="A thin, long-lived runtime for DuckDB's Quack protocol (DuckLake first-class)" \
+      org.opencontainers.image.licenses="MIT"
+
 RUN useradd --uid 1000 --create-home quack
 USER quack
 ENV HOME=/home/quack \
