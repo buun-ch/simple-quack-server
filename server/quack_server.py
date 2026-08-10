@@ -26,11 +26,6 @@ Kubernetes Secret):
     S3_USE_SSL             (default: false)
     S3_REGION              (default: us-east-1)
     ATTACH_ALIAS           (default: lake)
-
-    MIRROR_VIEWS           mirror attached tables as views in the default
-                           database so clients can read `remote.<table>`
-                           without a catalog prefix (default: true)
-    VIEW_REFRESH_SECONDS   mirror refresh interval (default: 60)
 """
 
 import os
@@ -88,31 +83,9 @@ def attach_database(con: duckdb.DuckDBPyConnection) -> str:
     return alias
 
 
-def mirror_views(con: duckdb.DuckDBPyConnection, alias: str) -> int:
-    """
-    Create/refresh views in the default database mirroring attached tables,
-    so clients can read remote.<table> without the catalog prefix.
-    """
-    tables = con.execute(
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_catalog = ? AND table_schema = 'main' AND table_type = 'BASE TABLE'",
-        [alias],
-    ).fetchall()
-    for (table_name,) in tables:
-        con.execute(
-            f'CREATE OR REPLACE VIEW "{table_name}" AS SELECT * FROM {alias}."{table_name}"'
-        )
-    return len(tables)
-
-
 def main() -> None:
     con = duckdb.connect()
     alias = attach_database(con)
-
-    do_mirror = env_bool("MIRROR_VIEWS", True)
-    if do_mirror:
-        count = mirror_views(con, alias)
-        print(f"mirrored {count} tables as views", flush=True)
 
     con.execute("INSTALL quack; LOAD quack;")
     port = env("QUACK_PORT", "9494")
@@ -124,26 +97,33 @@ def main() -> None:
         f"CALL quack_serve('{uri}', token = '{token}', allow_other_hostname = true)"
     ).fetchall()
     print(f"quack server started: {info[0][1]}", flush=True)
+    # Remote sessions start in the server's (empty) default database, so each
+    # client has to switch to the attached one before unqualified names resolve.
+    print(
+        f"clients: ATTACH 'quack:<host>' AS {alias} (TOKEN '...'); "
+        f"FROM {alias}.query('USE {alias}');",
+        flush=True,
+    )
 
     stop = threading.Event()
 
+    # Only set the event here: I/O from a signal handler can collide with a
+    # server thread writing to stdout (RuntimeError: reentrant call).
     def handle_term(signum, frame):  # noqa: ARG001
-        print("received shutdown signal, stopping...", flush=True)
         stop.set()
 
     signal.signal(signal.SIGTERM, handle_term)
     signal.signal(signal.SIGINT, handle_term)
 
-    refresh = int(env("VIEW_REFRESH_SECONDS", "60"))
-    while not stop.wait(timeout=refresh):
-        if do_mirror:
-            try:
-                mirror_views(con, alias)
-            except Exception as e:  # noqa: BLE001 - keep serving even if refresh fails
-                print(f"view refresh failed: {e}", flush=True)
+    # Poll instead of a plain wait(): while quack_serve is running, a blocking
+    # wait() with no timeout never lets the main thread process SIGTERM, so the
+    # pod would hang until SIGKILL.
+    while not stop.wait(timeout=1):
+        pass
+    print("received shutdown signal, stopping...", flush=True)
 
     try:
-        con.execute(f"SELECT quack_stop('{uri}')")
+        con.execute(f"FROM quack_stop('{uri}')")
         print("quack server stopped", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"quack_stop failed: {e}", flush=True)

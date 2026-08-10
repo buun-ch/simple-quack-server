@@ -8,15 +8,18 @@ Serving a DuckLake this way means clients need only a URL and a token — Postgr
 
 ```sql
 LOAD quack;
-ATTACH 'quack:lake.example.com:443' AS remote (TOKEN '<token>');
-SELECT * FROM remote.my_table;                                -- reads (mirror views)
-SELECT * FROM remote.query('INSERT INTO lake.my_table ...');  -- writes / DDL
+ATTACH 'quack:lake.example.com:443' AS lake (TOKEN '<token>');
+FROM lake.query('USE lake');                     -- once per session, see below
+SELECT * FROM lake.my_table;                     -- reads, INSERT and CTAS work directly
+SELECT * FROM lake.query('MERGE INTO ...');      -- UPDATE/DELETE/ALTER/MERGE/time travel
 ```
 
 ## How it works
 
 - The server attaches your DuckLake (or runs an arbitrary `INIT_SQL_FILE`) and calls `quack_serve` with `allow_other_hostname = true`. TLS termination is expected at the ingress/proxy layer, as recommended by the quack documentation.
-- Remote quack sessions do not inherit the server's default database, so the server mirrors attached tables as views (refreshed periodically) — clients read `remote.<table>` directly. Writes and DDL go through `remote.query('... lake.<table> ...')`.
+- **Clients must switch to the attached database once per session** (`FROM <alias>.query('USE lake')`). The quack client sends SQL without the catalog qualifier, so unqualified names resolve in the *server session's* default database — which starts out as the empty in-memory one. `USE` moves it; the server cannot do this on the client's behalf (`search_path` cannot be set globally, and quack creates each session's connection without init SQL). Tables in schemas other than `main` need `USE lake.<schema>`, or `SET search_path = 'lake.main,lake.<schema>'` for several at once.
+- After that, `SELECT`, `INSERT` and `CREATE TABLE ... AS` work directly against `<alias>.<table>`. `UPDATE`, `DELETE`, `ALTER TABLE`, `MERGE INTO`, time travel (`AT (VERSION => n)`) and DuckLake table functions are not implemented in the quack client yet (independently of which database is used) — wrap those in `<alias>.query('...')`.
+- The client loads the catalog when `ATTACH` runs, so tables created afterwards become visible on re-attach. If the server restarts, the session dies with `Invalid connection id` and the client has to re-attach.
 - One replica = one writer. DuckLake's optimistic concurrency handles concurrent commits from other writers, but this server is intentionally a single process.
 
 ## Configuration
@@ -40,8 +43,6 @@ All configuration is via environment variables. In Kubernetes they are injected 
 | `S3_REGION`            |          | `us-east-1` | Object storage region                  |
 | `ATTACH_ALIAS`         |          | `lake`      | Alias of the attached database         |
 | `INIT_SQL_FILE`        |          |             | SQL file to run instead of `CATALOG_*` |
-| `MIRROR_VIEWS`         |          | `true`      | Mirror attached tables as views        |
-| `VIEW_REFRESH_SECONDS` |          | `60`        | Mirror refresh interval                |
 
 \* required unless `INIT_SQL_FILE` is set.
 
@@ -74,15 +75,25 @@ Tools are managed with [mise](https://mise.jdx.dev/): `mise install`.
 
 ```bash
 just serve          # run locally (configuration via environment variables)
+just test           # lifecycle test: local DuckLake, client roundtrip, SIGTERM
 just image-build    # build the image
 just helm-lint      # lint the chart
 just helm-template  # render the chart
 just client-test localhost:9494 <token>   # smoke test a running server
+just helm-test <namespace>                # run the chart's test hook (read-only)
 ```
+
+`just test` needs nothing but `uv` and the `ducklake` extension: it starts the
+server on a temporary local DuckLake, attaches as a client, checks the `USE`
+contract with a read and an insert, then requires SIGTERM to stop the server
+cleanly. `just helm-test` runs `helm test`, which attaches to a deployed release
+from inside the cluster and reads the catalog — no writes to the real lake. Set
+`tests.enabled=false` to leave the hook out of the release.
 
 ## Notes
 
 - Clients assume HTTPS for non-localhost hosts. Inside a cluster (plain HTTP), attach with `(DISABLE_SSL true)`; behind a TLS-terminating ingress, omit it.
+- Earlier versions mirrored the attached tables as views in the default database so that `remote.<table>` resolved without `USE`. That has been removed: the mirror views shadowed the real tables in the client's catalog (making them read-only even after `USE`), covered the `main` schema only, and lagged behind DDL. A client that cannot issue a single statement at session start cannot `ATTACH` either, so nothing is lost.
 - Authentication is a single shared token for now. For OAuth 2.1 / OIDC (per-user tokens, claim-based authorization, audit), see [quack-oauth](https://github.com/DataZooDE/quack-oauth) — planned as an optional integration.
 
 ## License

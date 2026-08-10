@@ -3,10 +3,11 @@ simple-quack-server has been deployed.
 In-cluster clients (plain HTTP):
 
   LOAD quack;
-  ATTACH 'quack:{{ include "simple-quack-server.fullname" . }}.{{ .Release.Namespace }}' AS remote
+  ATTACH 'quack:{{ include "simple-quack-server.fullname" . }}.{{ .Release.Namespace }}' AS lake
       (TOKEN '<QUACK_TOKEN from secret {{ .Values.auth.existingSecret }}>', DISABLE_SSL true);
-  SELECT * FROM remote.<table>;                                 -- reads (mirror views)
-  SELECT * FROM remote.query('INSERT INTO lake.<table> ...');   -- writes / DDL
+  FROM lake.query('USE {{ .Values.env.ATTACH_ALIAS | default "lake" }}');  -- once per session
+  SELECT * FROM lake.<table>;                          -- reads, INSERT, CTAS
+  SELECT * FROM lake.query('MERGE INTO ...');          -- UPDATE/DELETE/ALTER/MERGE/time travel
 
 {{- if .Values.ingress.enabled }}
 {{- range .Values.ingress.hosts }}

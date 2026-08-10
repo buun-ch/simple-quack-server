@@ -1,0 +1,65 @@
+{{- if .Values.tests.enabled }}
+{{- $alias := .Values.env.ATTACH_ALIAS | default "lake" }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "simple-quack-server.fullname" . }}-test-client
+  labels:
+    {{- include "simple-quack-server.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.podSecurityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    # The server image already carries duckdb and the quack extension, so the
+    # test needs no second image and no network beyond the service.
+    - name: client
+      {{- with .Values.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      env:
+        - name: QUACK_URI
+          value: "quack:{{ include "simple-quack-server.fullname" . }}.{{ .Release.Namespace }}:{{ .Values.service.port }}"
+        - name: QUACK_ALIAS
+          value: {{ $alias | quote }}
+      envFrom:
+        - secretRef:
+            name: {{ required "auth.existingSecret is required" .Values.auth.existingSecret }}
+      command: ["python", "-c"]
+      args:
+        # Read-only on purpose: this runs against the real lake.
+        - |
+          import os
+          import duckdb
+
+          uri, alias = os.environ["QUACK_URI"], os.environ["QUACK_ALIAS"]
+          con = duckdb.connect()
+          con.execute("LOAD quack")
+          con.execute(
+              f"ATTACH '{uri}' AS remote (TOKEN '{os.environ['QUACK_TOKEN']}', DISABLE_SSL true)"
+          )
+          # Remote sessions start in the server's default database; without this
+          # the attached lake is not reachable by unqualified name.
+          con.execute(f"FROM remote.query('USE {alias}')")
+          database, schema = con.execute(
+              "FROM remote.query('SELECT current_database(), current_schema()')"
+          ).fetchone()
+          assert database == alias, f"expected to be in '{alias}', got '{database}'"
+          tables = con.execute(
+              "FROM remote.query('SELECT count(*) FROM information_schema.tables "
+              f"WHERE table_catalog = ''{alias}''')"
+          ).fetchone()[0]
+          print(f"attached {uri}, in {database}.{schema}, {tables} table(s) visible")
+{{- end }}

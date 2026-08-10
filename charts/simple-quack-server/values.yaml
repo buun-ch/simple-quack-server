@@ -19,13 +19,17 @@ auth:
 
 # Additional plain (non-secret) environment variables.
 env: {}
-  # MIRROR_VIEWS: "true"
-  # VIEW_REFRESH_SECONDS: "60"
   # ATTACH_ALIAS: lake
+  # QUACK_PORT: "9494"
 
 # Optional SQL executed at startup instead of the CATALOG_*/S3_* attachment.
 # Rendered into a ConfigMap and passed to the server via INIT_SQL_FILE.
 initSql: ""
+
+tests:
+  # Render the `helm test` hook: a Pod that attaches over quack, switches to the
+  # attached database and reads the catalog. Read-only.
+  enabled: true
 
 imagePullSecrets: []
 nameOverride: ""
